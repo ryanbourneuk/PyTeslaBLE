@@ -33,3 +33,9 @@ For now, the best solution I have is to simply modify the if statement that prod
 Huge props to Lex Nastin for putting together some documentation for the Tesla BLE API. Check out the documentation [here](https://teslabtapi.lexnastin.com/).
 
 Also many thanks to Kevin Dewald from Neuralink for the [BLE library](https://github.com/OpenBluetoothToolbox/SimpleBLE)!
+
+## Building for local development
+
+To build a package to add to `pip` locally, run `python3 -m build`.
+
+To then install the package to `pip`, run `pip3 install ./dist/pyteslable-0.1.4.tar.gz`

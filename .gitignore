@@ -1,9 +1,11 @@
 
 .tesladata
 *.pyc
-private_key.pem
+*.pem
+*.txt
 example/Test.py
 .vscode
 pyteslable.egg-info
 build
 dist
+.DS_Store

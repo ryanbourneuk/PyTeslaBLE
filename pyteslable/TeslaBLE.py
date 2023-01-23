@@ -10,13 +10,14 @@ from cryptography.hazmat.backends import default_backend
 import binascii
 # ble
 import simplepyble
+import asyncio
+from bleak import BleakClient, BleakGATTCharacteristic
 # regex
 import re
 # files
 from os.path import exists
 # time
 import time
-
 
 class BLE:
     def __init__(self, private_key_file=None):
@@ -80,7 +81,6 @@ class BLE:
     def get_vehicle_by_address(self, address):
         return self.scan().getAddress(address)
 
-
 class VehicleList:
     def __init__(self):
         self.__vehicles = []
@@ -121,12 +121,11 @@ class VehicleList:
             result = result[:-2]
         return result + "]"
 
-
 class Vehicle:
-    def __init__(self, peripheral, private_key):
+    def __init__(self, peripheral: BleakClient, private_key):
         if not exists(".tesladata"):
             os.mkdir(".tesladata")
-        file_name = ".tesladata/" + peripheral.address() + ".txt"
+        file_name = ".tesladata/" + peripheral.address + ".txt"
         self.file_name = file_name.replace(":", "")
         self.__peripheral = peripheral
         arr = self.getLineFromFile()
@@ -180,8 +179,8 @@ class Vehicle:
         if not exists(file_name):
             with open(file_name, 'w') as f:
                 f.write(
-                    "{} {} {}".format(self.__peripheral.address(), 1, "null"))
-                return [self.__peripheral.address(), 1, "null"]
+                    "{} {} {}".format(self.__peripheral.address, 1, "null"))
+                return [self.__peripheral.address, 1, "null"]
         # opens the file and reads the line
         with open(file_name, "r") as f:
             line = f.readline()
@@ -192,13 +191,13 @@ class Vehicle:
         # write the new lines back to the file
         with open(file_name, "w") as f:
             f.write(
-                "{} {} {}".format(self.__peripheral.address(), self.__counter, self.__vehicle_key_str))
+                "{} {} {}".format(self.__peripheral.address, self.__counter, self.__vehicle_key_str))
 
     def address(self):
-        return self.__peripheral.address()
+        return self.__peripheral.address
 
     def name(self):
-        return self.__peripheral.identifier()
+        return self.__peripheral.name
 
     def counter(self):
         return self.__counter
@@ -219,93 +218,93 @@ class Vehicle:
         self.__vehicle_key_str = vehicle_key
         self.updateFile()
 
-    def connect(self):
-        self.__peripheral.connect()
-        self.__peripheral.indicate(
-            TeslaUUIDs.SERVICE_UUID, TeslaUUIDs.CHAR_READ_UUID, lambda data: self.handle_notify(data))
+    async def connect(self):
+        # For dev purposes, print out the service UUIDs
+        for service in self.__peripheral.services:
+            print("\nService:", service.uuid)
+            for characteristic in service.characteristics:
+                print(characteristic.properties, characteristic.uuid)
 
-    def disconnect(self):
-        self.__peripheral.disconnect()
+        await self.__peripheral.connect(timeout=15)
+        await self.__peripheral.start_notify(TeslaUUIDs.CHAR_READ_UUID, self.handle_notify)
 
-    def whitelist(self):
+    async def disconnect(self):
+        await self.__peripheral.stop_notify(TeslaUUIDs.CHAR_READ_UUID)
+        await self.__peripheral.disconnect()
+
+    async def whitelist(self):
         msg = self.__service.whitelistMsg()
         msg = bytes(msg)
-        self.__peripheral.write_command(
-            TeslaUUIDs.SERVICE_UUID, TeslaUUIDs.CHAR_WRITE_UUID, msg)
+        await self.__peripheral.write_gatt_char(TeslaUUIDs.CHAR_WRITE_UUID, msg)
         print("Sent whitelist request")
         while True:
             msg = self.__service.vehiclePublicKeyMsg()
             msg = bytes(msg)
-            self.__peripheral.write_command(
-                TeslaUUIDs.SERVICE_UUID, TeslaUUIDs.CHAR_WRITE_UUID, msg)
-            print("Waiting for keycard to be tapped...")
+            await self.__peripheral.write_gatt_char(TeslaUUIDs.CHAR_WRITE_UUID, msg, True)
+            print("Waiting for keycard to be tapped...\n")
             time.sleep(2)  # I think time.sleep is not what I want
             if (self.isAdded()):
                 print("Authorized successfully")
                 break
 
-    def unlock(self):
+    async def openDriversDoor(self):
+        msg = self.__service.openDriversDoorMsg()
+        msg = bytes(msg)
+        self.__peripheral.write_gatt_char(TeslaUUIDs.CHAR_WRITE_UUID, msg)
+
+    async def unlock(self):
         msg = self.__service.unlockMsg()
         msg = bytes(msg)
-        self.__peripheral.write_command(
-            TeslaUUIDs.SERVICE_UUID, TeslaUUIDs.CHAR_WRITE_UUID, msg)
+        await self.__peripheral.write_gatt_char(TeslaUUIDs.CHAR_WRITE_UUID, msg)
 
-    def lock(self):
+    async def lock(self):
         msg = self.__service.lockMsg()
         msg = bytes(msg)
-        self.__peripheral.write_command(
-            TeslaUUIDs.SERVICE_UUID, TeslaUUIDs.CHAR_WRITE_UUID, msg)
+        await self.__peripheral.write_gatt_char(TeslaUUIDs.CHAR_WRITE_UUID, msg, True)
 
-    def open_trunk(self):
+    async def open_trunk(self):
         msg = self.__service.openTrunkMsg()
         msg = bytes(msg)
-        self.__peripheral.write_command(
-            TeslaUUIDs.SERVICE_UUID, TeslaUUIDs.CHAR_WRITE_UUID, msg)
+        await self.__peripheral.write_gatt_char(TeslaUUIDs.CHAR_WRITE_UUID, msg)
 
-    def open_frunk(self):
+    async def open_frunk(self):
         msg = self.__service.openFrunkMsg()
         msg = bytes(msg)
-        self.__peripheral.write_command(
-            TeslaUUIDs.SERVICE_UUID, TeslaUUIDs.CHAR_WRITE_UUID, msg)
+        await self.__peripheral.write_gatt_char(TeslaUUIDs.CHAR_WRITE_UUID, msg)
 
-    def open_charge_port(self):
+    async def open_charge_port(self):
         msg = self.__service.openChargePortMsg()
         msg = bytes(msg)
-        self.__peripheral.write_command(
-            TeslaUUIDs.SERVICE_UUID, TeslaUUIDs.CHAR_WRITE_UUID, msg)
+        await self.__peripheral.write_gatt_char(TeslaUUIDs.CHAR_WRITE_UUID, msg)
 
-    def close_charge_port(self):
+    async def close_charge_port(self):
         msg = self.__service.closeChargePortMsg()
         msg = bytes(msg)
-        self.__peripheral.write_command(
-            TeslaUUIDs.SERVICE_UUID, TeslaUUIDs.CHAR_WRITE_UUID, msg)
+        await self.__peripheral.write_gatt_char(TeslaUUIDs.CHAR_WRITE_UUID, msg)
 
-    def vehicle_status(self):
+    async def vehicle_status(self):
         msg = self.__service.vehicleStatusMsg()
         msg = bytes(msg)
-        self.__peripheral.write_command(
-            TeslaUUIDs.SERVICE_UUID, TeslaUUIDs.CHAR_WRITE_UUID, msg)
+        await self.__peripheral.write_gatt_char(TeslaUUIDs.CHAR_WRITE_UUID, msg)
 
-    def vehicle_info(self):
+    async def vehicle_info(self):
         msg = self.__service.vehicleInfoMsg()
         msg = bytes(msg)
-        self.__peripheral.write_command(
-            TeslaUUIDs.SERVICE_UUID, TeslaUUIDs.CHAR_WRITE_UUID, msg)
+        await self.__peripheral.write_gatt_char(TeslaUUIDs.CHAR_WRITE_UUID, msg)
 
     def isAdded(self):
         return self.__service.isAdded()
 
     def isConnected(self):
-        return self.__peripheral.is_connected()
+        return self.__peripheral.is_connected
 
-    def handle_notify(self, data):
-        self.__service.handle_notify(data)
+    async def handle_notify(self, characteristic: BleakGATTCharacteristic, data: bytearray):
+        await self.__service.handle_notify(data)
 
-    def authenticationRequest(self, requested_level):
+    async def authenticationRequest(self, requested_level):
         msg = self.__service.authenticationRequestMsg(requested_level)
         msg = bytes(msg)
-        self.__peripheral.write_command(
-            TeslaUUIDs.SERVICE_UUID, TeslaUUIDs.CHAR_WRITE_UUID, msg)
+        await self.__peripheral.write_gatt_char(TeslaUUIDs.CHAR_WRITE_UUID, msg, True) # TODO: try this as false?
 
 
 class TeslaMsgService:
@@ -371,6 +370,8 @@ class TeslaMsgService:
         nonce.append((self.counter >> 8) & 255)
         nonce.append(self.counter & 255)
 
+        print("sending message: ", message, self.counter)
+
         umsg_to = VCSEC_pb2.ToVCSECMessage()
         umsg_to.unsignedMessage.CopyFrom(message)
 
@@ -416,14 +417,14 @@ class TeslaMsgService:
 
     ###########################       PROCESS RESPONSES       #############################
 
-    def handle_notify(self, data):
+    async def handle_notify(self, data: bytearray):
         # remove first two bytes (length)
         data = data[2:]
         msg = VCSEC_pb2.FromVCSECMessage()
         msg.ParseFromString(data)
 
         if self.__vehicle.is_debug():
-            print(msg)
+            print("received data", msg)
 
         # see if the response is the shared key
         if msg.HasField('sessionInfo'):
@@ -431,7 +432,7 @@ class TeslaMsgService:
             self.loadEphemeralKey(key)
             print("Loaded ephemeral key")
         elif msg.HasField('authenticationRequest'):
-            self.__vehicle.authenticationRequest(
+            await self.__vehicle.authenticationRequest(
                 msg.authenticationRequest.requestedLevel)
         elif msg.HasField('vehicleStatus'):
             self.__vehicle.setStatus(msg.vehicleStatus)
@@ -452,6 +453,8 @@ class TeslaMsgService:
         msg = VCSEC_pb2.UnsignedMessage()
         whitelist_operation = msg.WhitelistOperation
         permissions_action = whitelist_operation.addKeyToWhitelistAndAddPermissions
+        print(permissions_action)
+        #.addKeyToWhitelistAndAddPermissions
         permissions_action.key.PublicKeyRaw = self.getPublicKey()
         permissions = permissions_action.permission
         permissions.append(VCSEC_pb2.WHITELISTKEYPERMISSION_LOCAL_DRIVE)
@@ -460,6 +463,7 @@ class TeslaMsgService:
         permissions.append(VCSEC_pb2.WHITELISTKEYPERMISSION_REMOTE_UNLOCK)
         whitelist_operation.metadataForKey.keyFormFactor = VCSEC_pb2.KEY_FORM_FACTOR_ANDROID_DEVICE
 
+        print("whitelistMsg", msg.SerializeToString())
         msg2 = VCSEC_pb2.ToVCSECMessage()
         msg2.signedMessage.signatureType = VCSEC_pb2.SIGNATURE_TYPE_PRESENT_KEY
         msg2.signedMessage.protobufMessageAsBytes = msg.SerializeToString()
@@ -488,10 +492,18 @@ class TeslaMsgService:
         # closes the charge port
         return self.rkeActionMsg(VCSEC_pb2.RKEAction_E.RKE_ACTION_CLOSE_CHARGE_PORT)
 
+    def openDriversDoorMsg(self):
+        return self.closureMoveRequestMsg(VCSEC_pb2.ClosureMoveRequest.frontDriverDoor)
+
     def rkeActionMsg(self, action):
         # executes the given RKE action
         msg = VCSEC_pb2.UnsignedMessage()
         msg.RKEAction = action
+        return self.signedToMsg(msg)
+
+    def closureMoveRequestMsg(self, action):
+        msg = VCSEC_pb2.UnsignedMessage()
+        msg.closureMoveRequest = action
         return self.signedToMsg(msg)
 
     def informationRequestMsg(self, type):
